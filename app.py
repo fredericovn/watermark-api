@@ -53,14 +53,28 @@ def watermark():
         with Image.open(LOGO_PATH) as source_logo:
             logo = source_logo.convert("RGBA")
 
-        max_logo_width = max(1, min(300, round(photo.width * 0.22)))
-        max_logo_height = max(1, min(300, round(photo.height * 0.22)))
+        alpha = logo.getchannel("A")
+        visible_mask = alpha.point(lambda value: 255 if value >= 8 else 0)
+        visible_bbox = visible_mask.getbbox()
+        if visible_bbox:
+            left, top, right, bottom = visible_bbox
+            padding = max(1, round(max(right - left, bottom - top) * 0.05))
+            logo = logo.crop(
+                (
+                    max(0, left - padding),
+                    max(0, top - padding),
+                    min(logo.width, right + padding),
+                    min(logo.height, bottom + padding),
+                )
+            )
+
+        max_logo_width = max(1, round(photo.width * 0.18))
+        max_logo_height = max(1, round(photo.height * 0.18))
         logo.thumbnail((max_logo_width, max_logo_height), Image.Resampling.LANCZOS)
 
-        margin = max(12, min(30, round(min(photo.size) * 0.025)))
         position = (
-            max(0, photo.width - logo.width - margin),
-            max(0, photo.height - logo.height - margin),
+            max(0, (photo.width - logo.width) // 2),
+            max(0, (photo.height - logo.height) // 2),
         )
         photo.alpha_composite(logo, dest=position)
 

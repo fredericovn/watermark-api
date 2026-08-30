@@ -196,6 +196,48 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, wi
     return lines
 
 
+def _fit_single_line(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font_path: Path,
+    max_size: int,
+    min_size: int,
+    max_width: int,
+) -> tuple[str, ImageFont.FreeTypeFont]:
+    """Dimensiona uma linha sem permitir que ela ultrapasse sua área."""
+    value = " ".join(text.strip().split())
+    for size in range(max_size, min_size - 1, -1):
+        font = _font(font_path, size)
+        if draw.textlength(value, font=font) <= max_width:
+            return value, font
+    font = _font(font_path, min_size)
+    suffix = "…"
+    while value and draw.textlength(value + suffix, font=font) > max_width:
+        value = value[:-1].rstrip()
+    return value + suffix, font
+
+
+def _fit_wrapped_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font_path: Path,
+    max_size: int,
+    min_size: int,
+    max_width: int,
+    max_height: int,
+    max_lines: int,
+) -> tuple[list[str], ImageFont.FreeTypeFont, int]:
+    """Ajusta fonte e entrelinha até o bloco caber em largura e altura."""
+    for size in range(max_size, min_size - 1, -2):
+        font = _font(font_path, size)
+        lines = _wrap(draw, text, font, max_width, max_lines)
+        line_height = round(size * 1.18)
+        if lines and len(lines) * line_height <= max_height:
+            return lines, font, line_height
+    font = _font(font_path, min_size)
+    return _wrap(draw, text, font, max_width, max_lines), font, round(min_size * 1.18)
+
+
 def render_image(payload: dict[str, Any], image: Image.Image | None = None) -> Rendered:
     data = validate_payload(payload)
     width, height, family = TEMPLATES[data["template_code"]]
@@ -260,20 +302,50 @@ def _render_photo_impact(data: dict[str, Any], source: Image.Image, width: int, 
     tag_font = _font(FONT_BODY_BOLD, 28)
     draw.rounded_rectangle((70, 1050, 365, 1118), radius=32, fill=OLIVE)
     draw.text((100, 1068), "EXCLUSIVIDADE VCV", font=tag_font, fill=WHITE)
-    title_font = _font(FONT_TITLE, 78)
+    title_lines, title_font, title_line_height = _fit_wrapped_text(
+        draw, data["headline"], FONT_TITLE, 78, 52, 900, 282, 3
+    )
     y = 1165
-    for line in _wrap(draw, data["headline"], title_font, 900, 3):
+    for line in title_lines:
         draw.text((72, y), line, font=title_font, fill=WHITE, stroke_width=1, stroke_fill=(0, 0, 0, 100))
-        y += 92
-    sub_font = _font(FONT_BODY, 34)
+        y += title_line_height
     sub = str(data.get("subheadline") or "").strip()
     if sub:
-        draw.text((76, min(y + 18, 1590)), sub, font=sub_font, fill=CREAM)
-    cta_font = _font(FONT_BODY_BOLD, 29)
-    draw.rounded_rectangle((72, 1740, 720, 1830), radius=44, fill=GOLD)
-    draw.text((112, 1768), str(data.get("cta") or "AGENDE UMA VISITA").upper(), font=cta_font, fill=CHARCOAL)
-    code_font = _font(FONT_BODY, 24)
-    draw.text((780, 1770), str(data.get("property_code") or f"ID {data['property_id']}").upper(), font=code_font, fill=WHITE)
+        sub_text, sub_font = _fit_single_line(draw, sub, FONT_BODY, 34, 24, 928)
+        draw.text((76, min(y + 18, 1588)), sub_text, font=sub_font, fill=CREAM)
+
+    # O código e o CTA têm áreas independentes. Isso evita a colisão observada
+    # quando ambos continham textos próximos dos limites aceitos pela API.
+    code_text, code_font = _fit_single_line(
+        draw,
+        str(data.get("property_code") or f"ID {data['property_id']}").upper(),
+        FONT_BODY,
+        24,
+        18,
+        420,
+    )
+    code_width = draw.textlength(code_text, font=code_font)
+    draw.text((1008 - code_width, 1688), code_text, font=code_font, fill=WHITE)
+
+    cta_box = (72, 1740, 1008, 1830)
+    draw.rounded_rectangle(cta_box, radius=44, fill=GOLD)
+    cta_text, cta_font = _fit_single_line(
+        draw,
+        str(data.get("cta") or "AGENDE UMA VISITA").upper(),
+        FONT_BODY_BOLD,
+        29,
+        19,
+        cta_box[2] - cta_box[0] - 80,
+    )
+    cta_width = draw.textlength(cta_text, font=cta_font)
+    cta_bbox = draw.textbbox((0, 0), cta_text, font=cta_font)
+    cta_height = cta_bbox[3] - cta_bbox[1]
+    draw.text(
+        ((width - cta_width) / 2, cta_box[1] + (cta_box[3] - cta_box[1] - cta_height) / 2 - cta_bbox[1]),
+        cta_text,
+        font=cta_font,
+        fill=CHARCOAL,
+    )
     return canvas.convert("RGB")
 
 

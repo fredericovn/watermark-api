@@ -8,7 +8,14 @@ from pathlib import Path
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from renderer import RenderError, render_image, render_reel_package, validate_payload  # noqa: E402
+from renderer import (  # noqa: E402
+    FONT_BODY,
+    RenderError,
+    _fit_single_line,
+    render_image,
+    render_reel_package,
+    validate_payload,
+)
 
 
 def sample_payload(template="IG_FEED_HERO_V1"):
@@ -46,6 +53,20 @@ def test_feed_dimensions_and_hash():
 def test_story_dimensions():
     rendered = render_image(sample_payload("STORY_PROPERTY_V1"), photo())
     assert Image.open(io.BytesIO(rendered.body)).size == (1080, 1920)
+
+
+def test_long_cta_and_property_code_fit_their_reserved_areas():
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(Image.new("RGB", (1080, 1920)))
+    cta, cta_font = _fit_single_line(
+        draw, "SOLICITE MAIS INFORMAÇÕES COM A EQUIPE VCV", FONT_BODY, 29, 19, 856
+    )
+    code, code_font = _fit_single_line(
+        draw, "APTO MILLENIUM I", FONT_BODY, 24, 18, 420
+    )
+    assert draw.textlength(cta, font=cta_font) <= 856
+    assert draw.textlength(code, font=code_font) <= 420
 
 
 def test_unknown_field_is_rejected():

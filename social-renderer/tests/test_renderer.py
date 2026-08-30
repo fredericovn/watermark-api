@@ -15,6 +15,7 @@ def sample_payload(template="IG_FEED_HERO_V1"):
     return {
         "template_code": template,
         "template_version": 1,
+        "template_status": "PUBLICADO",
         "property_id": 98,
         "content_id": 15,
         "headline": "Apartamento no Edifício Millenium",
@@ -56,6 +57,19 @@ def test_unknown_field_is_rejected():
         assert "Campos desconhecidos" in str(error)
     else:
         raise AssertionError("Campo desconhecido foi aceito")
+
+
+def test_draft_template_requires_explicit_homologation_flag(monkeypatch):
+    payload = sample_payload()
+    payload["template_status"] = "RASCUNHO"
+    try:
+        validate_payload(payload)
+    except RenderError as error:
+        assert "não publicado" in str(error)
+    else:
+        raise AssertionError("Template rascunho foi aceito sem autorização")
+    monkeypatch.setenv("ALLOW_DRAFT_TEMPLATES", "true")
+    assert validate_payload(payload)["template_status"] == "RASCUNHO"
 
 
 def test_reel_package_contains_video_subtitles_cover_and_manifest():

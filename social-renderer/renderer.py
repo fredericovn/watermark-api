@@ -39,7 +39,7 @@ TEMPLATES = {
 }
 
 ALLOWED_KEYS = {
-    "template_code", "template_version", "property_id", "content_id",
+    "template_code", "template_version", "template_status", "property_id", "content_id",
     "headline", "subheadline", "cta", "property_code", "show_price",
     "price", "assets", "scenes", "brand_version", "locale",
 }
@@ -71,6 +71,10 @@ def validate_payload(payload: Any, *, video: bool = False) -> dict[str, Any]:
         raise RenderError(f"Campos desconhecidos: {', '.join(unknown)}.")
     template = payload.get("template_code")
     if template not in TEMPLATES:
+        raise RenderError("Template inexistente ou não publicado.")
+    template_status = str(payload.get("template_status") or "").upper()
+    allow_drafts = os.getenv("ALLOW_DRAFT_TEMPLATES", "false").lower() in {"1", "true", "yes"}
+    if template_status != "PUBLICADO" and not (allow_drafts and template_status == "RASCUNHO"):
         raise RenderError("Template inexistente ou não publicado.")
     if video and template != "REEL_PROPERTY_V1":
         raise RenderError("O endpoint de vídeo aceita somente REEL_PROPERTY_V1.")

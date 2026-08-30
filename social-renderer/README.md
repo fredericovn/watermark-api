@@ -41,7 +41,12 @@ dependência. Em runtime, configurar pelo menos:
 ```text
 SOURCE_IMAGE_HOSTS=<host-ords>,<host-publico-backblaze>
 MAX_SOURCE_BYTES=26214400
+ALLOW_DRAFT_TEMPLATES=false
 PORT=8080
 ```
+
+Use `ALLOW_DRAFT_TEMPLATES=true` somente em homologação enquanto os
+templates visuais ainda aguardam aprovação. Em produção, o renderizador
+aceita exclusivamente templates com status `PUBLICADO`.
 
 Não registrar tokens, URLs assinadas nem payloads completos em logs.

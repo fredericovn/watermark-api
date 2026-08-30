@@ -95,8 +95,12 @@ def validate_payload(payload: Any, *, video: bool = False) -> dict[str, Any]:
     assets = payload.get("assets") or []
     if not isinstance(assets, list) or not assets:
         raise RenderError("Informe ao menos uma imagem em assets.")
+    # O snapshot pode conter a galeria completa. O renderer usa no máximo as
+    # 12 primeiras imagens ordenadas para manter custo, memória e tempo
+    # previsíveis sem rejeitar imóveis que possuam uma galeria maior.
     if len(assets) > 12:
-        raise RenderError("O limite é de 12 imagens por renderização.")
+        assets = sorted(assets, key=lambda asset: asset.get("order", 999))[:12]
+        payload["assets"] = assets
     for asset in assets:
         if not isinstance(asset, dict) or set(asset) - {"url", "order", "alt"}:
             raise RenderError("Asset inválido.")

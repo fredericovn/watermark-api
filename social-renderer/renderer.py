@@ -348,56 +348,61 @@ def _render_feed(data: dict[str, Any], source: Image.Image, width: int, height: 
 def _render_carousel_cover(data: dict[str, Any], source: Image.Image, width: int, height: int) -> Image.Image:
     canvas = _fit_cover(source, (width, height), 0.48)
     draw = ImageDraw.Draw(canvas, "RGBA")
-    draw.ellipse((690, -420, 1370, 330), fill=(*ImageColor.getrgb(SAGE), 255))
-    draw.rectangle((0, 760, width, height), fill=(*ImageColor.getrgb(CREAM), 246))
-    draw.ellipse((-360, 660, 560, 1510), fill=(*ImageColor.getrgb(CREAM), 255))
-    draw.rounded_rectangle((64, 716, 390, 778), radius=31, fill=(*ImageColor.getrgb(SAGE), 255))
-    tag_font = _font(FONT_BODY_BOLD, 25)
-    draw.text((92, 733), "OPORTUNIDADE", font=tag_font, fill=BROWN)
-    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 70, 46, 890, 210, 3)
-    y = 830
+    draw.rectangle((0, 730, width, height), fill=(*ImageColor.getrgb(CREAM), 249))
+    draw.rectangle((0, 730, width, 742), fill=(*ImageColor.getrgb(GOLD), 255))
+    draw.rounded_rectangle((64, 690, 350, 754), radius=32, fill=(*ImageColor.getrgb(SAGE), 255))
+    tag_font = _font(FONT_BODY_BOLD, 23)
+    draw.text((94, 708), "IMÓVEL À VENDA", font=tag_font, fill=BROWN)
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 58, 42, 900, 176, 3)
+    y = 812
     for line in lines:
         draw.text((72, y), line, font=font, fill=BROWN)
         y += line_height
     sub = str(data.get("subheadline") or "").strip()
     if sub:
-        sub_text, sub_font = _fit_single_line(draw, sub, FONT_BODY, 31, 22, 900)
-        draw.text((76, y + 16), sub_text, font=sub_font, fill=BROWN)
+        sub_lines, sub_font, sub_height = _fit_wrapped_text(draw, sub, FONT_BODY, 29, 22, 900, 96, 2)
+        y += 14
+        for line in sub_lines:
+            draw.text((76, y), line, font=sub_font, fill=BROWN)
+            y += sub_height
     if data.get("show_price"):
-        price_text, price_font = _fit_single_line(draw, data["price"], FONT_BODY_BOLD, 36, 24, 500)
-        draw.text((76, 1138), price_text, font=price_font, fill=BROWN)
-    draw.rounded_rectangle((762, 1120, 1010, 1182), radius=31, fill=(*ImageColor.getrgb(GOLD), 255))
-    draw.text((802, 1136), "DESLIZE  >", font=tag_font, fill=BROWN)
-    _draw_footer(draw, data, 1265, width)
-    _paste_logo(canvas, (56, 42), 150)
+        price_text, price_font = _fit_single_line(draw, data["price"], FONT_BODY_BOLD, 34, 23, 500)
+        draw.text((76, 1112), price_text, font=price_font, fill=BROWN)
+    draw.rounded_rectangle((712, 1150, 1008, 1216), radius=33, fill=(*ImageColor.getrgb(GOLD), 255))
+    draw.text((770, 1168), "VEJA OS DETALHES  ›", font=tag_font, fill=BROWN)
+    code, code_font = _fit_single_line(draw, str(data.get("property_code") or "").upper(), FONT_BODY, 22, 17, 420)
+    draw.text((72, 1270), code, font=code_font, fill=BROWN)
     return canvas.convert("RGB")
 
 
 def _draw_carousel_number(draw: ImageDraw.ImageDraw, index: int, total: int) -> None:
-    font = _font(FONT_BODY_BOLD, 23)
+    font = _font(FONT_BODY_BOLD, 20)
     label = f"{index:02} / {total:02}"
-    draw.rounded_rectangle((72, 64, 220, 116), radius=26, fill=SAGE)
-    draw.text((94, 76), label, font=font, fill=BROWN)
+    draw.rounded_rectangle((64, 56, 194, 102), radius=23, fill=SAGE)
+    draw.text((84, 67), label, font=font, fill=BROWN)
 
 
 def _render_carousel_environment(data: dict[str, Any], source: Image.Image, index: int, total: int) -> Image.Image:
-    canvas = _fit_cover(source, (1080, 1350), 0.48).convert("RGBA")
+    canvas = Image.new("RGBA", (1080, 1350), CREAM)
+    canvas.paste(_fit_cover(source, (1080, 920), 0.48), (0, 0))
     draw = ImageDraw.Draw(canvas, "RGBA")
-    draw.rectangle((0, 890, 1080, 1350), fill=(*ImageColor.getrgb(CREAM), 246))
+    draw.rectangle((0, 920, 1080, 1350), fill=(*ImageColor.getrgb(CREAM), 255))
+    draw.rectangle((64, 920, 180, 930), fill=(*ImageColor.getrgb(GOLD), 255))
     _draw_carousel_number(draw, index, total)
-    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 58, 38, 900, 150, 2)
-    y = 950
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 52, 36, 900, 132, 2)
+    y = 978
     for line in lines:
         draw.text((72, y), line, font=font, fill=BROWN)
         y += line_height
     text = str(data.get("subheadline") or "").strip()
     if text:
-        body_lines, body_font, body_height = _fit_wrapped_text(draw, text, FONT_BODY, 31, 22, 900, 120, 3)
+        body_lines, body_font, body_height = _fit_wrapped_text(draw, text, FONT_BODY, 29, 22, 900, 108, 3)
         y += 12
         for line in body_lines:
             draw.text((76, y), line, font=body_font, fill=BROWN)
             y += body_height
-    _paste_logo(canvas, (884, 64), 130)
+    code, code_font = _fit_single_line(draw, str(data.get("property_code") or "").upper(), FONT_BODY, 20, 16, 390)
+    draw.text((72, 1290), code, font=code_font, fill=BROWN)
     return canvas.convert("RGB")
 
 
@@ -448,21 +453,25 @@ def _render_carousel_cta(data: dict[str, Any], source: Image.Image, index: int, 
     canvas = _photo_scrim(source, 1080, 1350)
     draw = ImageDraw.Draw(canvas, "RGBA")
     _draw_carousel_number(draw, index, total)
-    draw.rounded_rectangle((64, 670, 1016, 1160), radius=60, fill=(*ImageColor.getrgb(CREAM), 244))
-    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 64, 42, 820, 190, 3)
-    y = 755
+    draw.rounded_rectangle((64, 640, 1016, 1215), radius=56, fill=(*ImageColor.getrgb(CREAM), 248))
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 58, 40, 820, 165, 3)
+    y = 724
     for line in lines:
         draw.text((112, y), line, font=font, fill=BROWN)
         y += line_height
     body = str(data.get("subheadline") or "").strip()
     if body:
-        body_lines, body_font, body_height = _fit_wrapped_text(draw, body, FONT_BODY, 31, 22, 820, 100, 3)
+        body_lines, body_font, body_height = _fit_wrapped_text(draw, body, FONT_BODY, 29, 21, 820, 96, 3)
         y += 18
         for line in body_lines:
             draw.text((116, y), line, font=body_font, fill=BROWN)
             y += body_height
-    _draw_footer(draw, data, 1080, 1080)
-    _paste_logo(canvas, (850, 54), 150)
+    cta, cta_font = _fit_single_line(draw, str(data.get("cta") or "FALE COM A VCVARGAS").upper(), FONT_BODY_BOLD, 25, 17, 760)
+    draw.rounded_rectangle((112, 1050, 968, 1128), radius=39, fill=(*ImageColor.getrgb(GOLD), 255))
+    cta_width = draw.textlength(cta, font=cta_font)
+    draw.text(((1080 - cta_width) / 2, 1073), cta, font=cta_font, fill=CHARCOAL)
+    code, code_font = _fit_single_line(draw, str(data.get("property_code") or "").upper(), FONT_BODY, 20, 16, 390)
+    draw.text((112, 1160), code, font=code_font, fill=BROWN)
     return canvas.convert("RGB")
 
 
@@ -672,6 +681,7 @@ def render_carousel_package(payload: dict[str, Any], images: dict[int, Image.Ima
     assets = {int(asset.get("order", index + 1)): asset for index, asset in enumerate(data["assets"])}
     resolved = images or {order: fetch_image(asset["url"]) for order, asset in assets.items()}
     slides = data["slides"]
+    first_title = str(slides[0].get("title") or "").strip().casefold()
     package = io.BytesIO()
     manifest_slides: list[dict[str, Any]] = []
     with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -683,6 +693,9 @@ def render_carousel_package(payload: dict[str, Any], images: dict[int, Image.Ima
             slide_data = dict(data)
             slide_data["headline"] = str(slide.get("title") or data["headline"])
             slide_data["subheadline"] = str(slide.get("text") or "")
+            if slide_template == "cta_final" and slide_data["headline"].strip().casefold() == first_title:
+                slide_data["headline"] = "Agende sua visita"
+                slide_data["subheadline"] = str(data.get("cta") or "Fale com a equipe VCVargas para conhecer este imóvel.")
             if slide_template == "cover_hero":
                 canvas = _render_carousel_cover(slide_data, resolved[order], 1080, 1350)
             elif slide_template == "benefit_split":

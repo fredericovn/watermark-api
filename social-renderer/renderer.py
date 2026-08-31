@@ -504,18 +504,55 @@ def _motion_filter(motion: str, frames: int) -> str:
 
 
 def _music_source(profile: str, duration_seconds: float) -> str:
-    notes = {
-        "ambient_warm": (174.61, 220.00, 261.63),
-        "modern_soft": (196.00, 246.94, 293.66),
-        "elegant_minimal": (164.81, 207.65, 246.94),
-    }[profile]
-    signal = "+".join(f"0.018*sin(2*PI*{frequency}*t)" for frequency in notes)
+    # Pequenos arranjos determinísticos e instrumentais. Cada perfil combina
+    # progressão harmônica, arpejo e pulso suave; não usa gravações de terceiros.
+    profiles = {
+        "ambient_warm": {
+            "bpm": 104,
+            "chords": ((174.61, 220.00, 261.63), (130.81, 164.81, 220.00),
+                       (146.83, 196.00, 246.94), (130.81, 174.61, 220.00)),
+            "arp": (349.23, 440.00, 523.25, 440.00, 392.00, 440.00, 523.25, 659.25),
+        },
+        "modern_soft": {
+            "bpm": 116,
+            "chords": ((196.00, 246.94, 293.66), (146.83, 196.00, 246.94),
+                       (164.81, 220.00, 261.63), (130.81, 164.81, 220.00)),
+            "arp": (392.00, 493.88, 587.33, 493.88, 440.00, 523.25, 659.25, 523.25),
+        },
+        "elegant_minimal": {
+            "bpm": 94,
+            "chords": ((164.81, 207.65, 246.94), (123.47, 164.81, 207.65),
+                       (138.59, 185.00, 220.00), (146.83, 196.00, 246.94)),
+            "arp": (329.63, 415.30, 493.88, 415.30, 369.99, 440.00, 554.37, 440.00),
+        },
+    }
+    config = profiles[profile]
+    beat = 60.0 / config["bpm"]
+    bar = beat * 4
+    loop = bar * len(config["chords"])
+    pads = []
+    for index, chord in enumerate(config["chords"]):
+        gate = f"between(mod(t,{loop:.6f}),{index * bar:.6f},{(index + 1) * bar:.6f})"
+        tone = "+".join(f"sin(2*PI*{frequency:.2f}*t)" for frequency in chord)
+        pads.append(f"{gate}*0.010*({tone})")
+    arpeggio = []
+    step = beat / 2
+    arp_loop = step * len(config["arp"])
+    for index, frequency in enumerate(config["arp"]):
+        gate = f"between(mod(t,{arp_loop:.6f}),{index * step:.6f},{(index + 1) * step:.6f})"
+        envelope = f"exp(-7*mod(t,{step:.6f}))"
+        arpeggio.append(f"{gate}*0.024*{envelope}*sin(2*PI*{frequency:.2f}*t)")
+    pulse = (
+        f"0.020*exp(-15*mod(t,{beat:.6f}))*sin(2*PI*72*t)+"
+        f"0.006*exp(-28*mod(t,{beat / 2:.6f}))*sin(2*PI*3200*t)"
+    )
+    signal = "+".join([*pads, *arpeggio, pulse])
     fade_out = max(0.0, duration_seconds - 1.8)
     return (
         f"aevalsrc='{signal}':s=48000:d={duration_seconds:.3f},"
-        "lowpass=f=1100,highpass=f=90,"
-        f"afade=t=in:st=0:d=1.2,afade=t=out:st={fade_out:.3f}:d=1.8,"
-        "loudnorm=I=-20:TP=-2:LRA=7"
+        "highpass=f=55,lowpass=f=5200,aecho=0.8:0.28:85:0.12,"
+        f"afade=t=in:st=0:d=0.8,afade=t=out:st={fade_out:.3f}:d=1.8,"
+        "loudnorm=I=-23:TP=-3:LRA=8"
     )
 
 

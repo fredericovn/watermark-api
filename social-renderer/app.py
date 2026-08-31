@@ -29,7 +29,7 @@ def _binary_response(rendered):
 
 @app.get("/health")
 def health():
-    return jsonify(status="ok", renderer="vcv-social-renderer", version="2.0.0", publication=False)
+    return jsonify(status="ok", renderer="vcv-social-renderer", version="2.1.0", publication=False)
 
 
 @app.post("/v1/render/image")
@@ -39,6 +39,11 @@ def image_endpoint():
 
 @app.post("/v1/render/reel-package")
 def reel_endpoint():
+    return _binary_response(render_reel_package(request.get_json(silent=False)))
+
+
+@app.post("/v1/render/vertical-package")
+def vertical_endpoint():
     return _binary_response(render_reel_package(request.get_json(silent=False)))
 
 

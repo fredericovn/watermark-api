@@ -84,9 +84,9 @@ def validate_payload(payload: Any, *, video: bool = False) -> dict[str, Any]:
     allow_drafts = os.getenv("ALLOW_DRAFT_TEMPLATES", "false").lower() in {"1", "true", "yes"}
     if template_status != "PUBLICADO" and not (allow_drafts and template_status == "RASCUNHO"):
         raise RenderError("Template inexistente ou não publicado.")
-    if video and template != "REEL_PROPERTY_V1":
-        raise RenderError("O endpoint de vídeo aceita somente REEL_PROPERTY_V1.")
-    if not video and template == "REEL_PROPERTY_V1" and payload.get("scenes"):
+    if video and template not in {"REEL_PROPERTY_V1", "STORY_PROPERTY_V1"}:
+        raise RenderError("O endpoint de vídeo aceita somente STORY_PROPERTY_V1 ou REEL_PROPERTY_V1.")
+    if not video and template in {"REEL_PROPERTY_V1", "STORY_PROPERTY_V1"} and payload.get("scenes"):
         raise RenderError("Use o endpoint de vídeo para renderizar cenas.")
     for key in ("property_id", "content_id"):
         if not isinstance(payload.get(key), int) or payload[key] <= 0:

@@ -17,7 +17,8 @@ possuem composição explícita; Marketplace passa a gerar capa promocional sem
 substituir as fotografias documentais do anúncio.
 
 No Reel, cada cena aceita `motion` (`push_in`, `pull_out`, `pan_left` ou
-`pan_right`) e `transition`. O pacote pode receber `music_profile` com
+`pan_right`) e `transition`. O mesmo pipeline vertical também aceita Story
+animado quando o template é `STORY_PROPERTY_V1`. O pacote pode receber `music_profile` com
 `ambient_warm`, `modern_soft`, `elegant_minimal` ou `none`. Os três perfis
 musicais são sintetizados no render, sem gravações de terceiros, e a seleção é
 registrada em `manifest.json`.

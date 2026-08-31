@@ -133,6 +133,18 @@ def test_reel_uses_transitions_motion_and_neutral_music():
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["music_profile"] == "elegant_minimal"
         assert manifest["transition_seconds"] == 0.45
+
+
+def test_story_can_use_the_vertical_video_pipeline():
+    payload = sample_payload("STORY_PROPERTY_V1")
+    payload["scenes"] = [
+        {"asset_order": 1, "caption": "Veja os detalhes", "duration_ms": 1800, "motion": "push_in", "transition": "fade"},
+    ]
+    rendered = render_reel_package(payload, {1: photo()})
+    assert rendered.mime_type == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(rendered.body)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["template_code"] == "STORY_PROPERTY_V1"
         with tempfile.NamedTemporaryFile(suffix=".mp4") as video:
             video.write(archive.read("reel.mp4"))
             video.flush()

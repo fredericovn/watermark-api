@@ -142,8 +142,10 @@ def validate_payload(payload: Any, *, video: bool = False, carousel: bool = Fals
                 raise RenderError("Transição de cena inválida.")
     if carousel:
         slides = payload.get("slides") or []
+        # Os nomes antigos continuam aceitos para storyboards já gravados.
         allowed_slide_templates = {
-            "cover_hero", "environment_caption", "benefit_split", "property_facts", "cta_final"
+            "cover_hero", "environment_caption", "benefit_split", "property_facts", "cta_final",
+            "split_text_left", "split_text_right", "feature_icons", "facts_summary", "cta_brand",
         }
         if not isinstance(slides, list) or not 2 <= len(slides) <= 10:
             raise RenderError("Informe de 2 a 10 slides no carrossel.")
@@ -212,23 +214,22 @@ def _logo(max_width: int, max_height: int) -> Image.Image:
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, width: int, max_lines: int) -> list[str]:
     words = text.strip().split()
     lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if draw.textlength(candidate, font=font) <= width:
-            current = candidate
-        else:
-            if current:
-                lines.append(current)
-            current = word
-            if len(lines) == max_lines - 1:
+    cursor = 0
+    while cursor < len(words) and len(lines) < max_lines:
+        current = words[cursor]
+        cursor += 1
+        while cursor < len(words):
+            candidate = f"{current} {words[cursor]}"
+            if draw.textlength(candidate, font=font) > width:
                 break
-    if current and len(lines) < max_lines:
-        remaining = " ".join(words[len(" ".join(lines + [current]).split()):])
-        line = f"{current} {remaining}".strip()
-        while draw.textlength(line + "…", font=font) > width and " " in line:
-            line = line.rsplit(" ", 1)[0]
-        lines.append(line + ("…" if line != f"{current} {remaining}".strip() else ""))
+            current = candidate
+            cursor += 1
+        if len(lines) == max_lines - 1 and cursor < len(words):
+            while current and draw.textlength(current + "…", font=font) > width:
+                current = current.rsplit(" ", 1)[0] if " " in current else current[:-1]
+            current += "…"
+            cursor = len(words)
+        lines.append(current)
     return lines
 
 
@@ -375,11 +376,54 @@ def _render_carousel_cover(data: dict[str, Any], source: Image.Image, width: int
     return canvas.convert("RGB")
 
 
-def _draw_carousel_number(draw: ImageDraw.ImageDraw, index: int, total: int) -> None:
+def _draw_carousel_number(draw: ImageDraw.ImageDraw, index: int, total: int, x: int = 64) -> None:
     font = _font(FONT_BODY_BOLD, 20)
     label = f"{index:02} / {total:02}"
-    draw.rounded_rectangle((64, 56, 194, 102), radius=23, fill=SAGE)
-    draw.text((84, 67), label, font=font, fill=BROWN)
+    draw.rounded_rectangle((x, 56, x + 130, 102), radius=23, fill=SAGE)
+    draw.text((x + 20, 67), label, font=font, fill=BROWN)
+
+
+def _render_carousel_split(
+    data: dict[str, Any], source: Image.Image, index: int, total: int, *, text_left: bool
+) -> Image.Image:
+    """Layout editorial alternado: foto dominante e texto curto conectado à cena."""
+    canvas = Image.new("RGBA", (1080, 1350), CREAM)
+    panel_w = 390
+    photo_w = 1080 - panel_w + 46
+    photo_x = panel_w - 46 if text_left else 0
+    canvas.paste(_fit_cover(source, (photo_w, 1350), 0.48), (photo_x, 0))
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    if text_left:
+        draw.rectangle((0, 0, panel_w, 1350), fill=(*ImageColor.getrgb(CREAM), 255))
+        draw.ellipse((268, 1160, 500, 1410), fill=(*ImageColor.getrgb(SAGE), 255))
+        tx = 62
+    else:
+        draw.rectangle((1080 - panel_w, 0, 1080, 1350), fill=(*ImageColor.getrgb(CREAM), 255))
+        draw.ellipse((580, 1160, 812, 1410), fill=(*ImageColor.getrgb(SAGE), 255))
+        tx = 1080 - panel_w + 42
+    _draw_carousel_number(draw, index, total, 64 if text_left else 1080 - panel_w + 42)
+    draw.rectangle((tx, 322, tx + 82, 330), fill=(*ImageColor.getrgb(GOLD), 255))
+    lines, font, line_height = _fit_wrapped_text(
+        draw, data["headline"], FONT_BODY_BOLD, 44, 31, panel_w - 92, 188, 4
+    )
+    y = 365
+    for line in lines:
+        draw.text((tx, y), line, font=font, fill=BROWN)
+        y += line_height
+    body = str(data.get("subheadline") or "").strip()
+    if body:
+        body_lines, body_font, body_height = _fit_wrapped_text(
+            draw, body, FONT_BODY, 25, 19, panel_w - 92, 228, 6
+        )
+        y += 24
+        for line in body_lines:
+            draw.text((tx, y), line, font=body_font, fill=CHARCOAL)
+            y += body_height
+    code, code_font = _fit_single_line(
+        draw, str(data.get("property_code") or "").upper(), FONT_BODY, 17, 14, panel_w - 92
+    )
+    draw.text((tx, 1244), code, font=code_font, fill=BROWN)
+    return canvas.convert("RGB")
 
 
 def _render_carousel_environment(data: dict[str, Any], source: Image.Image, index: int, total: int) -> Image.Image:
@@ -426,6 +470,27 @@ def _render_carousel_benefit(data: dict[str, Any], source: Image.Image, index: i
             y += body_height
     draw.line((72, 1260, 1008, 1260), fill=GOLD, width=4)
     return canvas
+
+
+def _render_carousel_feature(data: dict[str, Any], source: Image.Image, index: int, total: int) -> Image.Image:
+    canvas = _fit_cover(source, (1080, 1350), 0.48).convert("RGBA")
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    draw.rounded_rectangle((64, 744, 1016, 1268), radius=58, fill=(*ImageColor.getrgb(CREAM), 247))
+    draw.rectangle((112, 804, 208, 814), fill=(*ImageColor.getrgb(GOLD), 255))
+    _draw_carousel_number(draw, index, total)
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_TITLE, 62, 40, 820, 150, 3)
+    y = 846
+    for line in lines:
+        draw.text((112, y), line, font=font, fill=BROWN)
+        y += line_height
+    body = str(data.get("subheadline") or "").strip()
+    if body:
+        body_lines, body_font, body_height = _fit_wrapped_text(draw, body, FONT_BODY, 29, 21, 820, 130, 4)
+        y += 20
+        for line in body_lines:
+            draw.text((116, y), line, font=body_font, fill=CHARCOAL)
+            y += body_height
+    return canvas.convert("RGB")
 
 
 def _render_carousel_facts(data: dict[str, Any], source: Image.Image, index: int, total: int) -> Image.Image:
@@ -693,16 +758,22 @@ def render_carousel_package(payload: dict[str, Any], images: dict[int, Image.Ima
             slide_data = dict(data)
             slide_data["headline"] = str(slide.get("title") or data["headline"])
             slide_data["subheadline"] = str(slide.get("text") or "")
-            if slide_template == "cta_final" and slide_data["headline"].strip().casefold() == first_title:
+            if slide_template in {"cta_final", "cta_brand"} and slide_data["headline"].strip().casefold() == first_title:
                 slide_data["headline"] = "Agende sua visita"
                 slide_data["subheadline"] = str(data.get("cta") or "Fale com a equipe VCVargas para conhecer este imóvel.")
             if slide_template == "cover_hero":
                 canvas = _render_carousel_cover(slide_data, resolved[order], 1080, 1350)
+            elif slide_template == "split_text_left":
+                canvas = _render_carousel_split(slide_data, resolved[order], index, len(slides), text_left=True)
+            elif slide_template == "split_text_right":
+                canvas = _render_carousel_split(slide_data, resolved[order], index, len(slides), text_left=False)
+            elif slide_template == "feature_icons":
+                canvas = _render_carousel_feature(slide_data, resolved[order], index, len(slides))
             elif slide_template == "benefit_split":
                 canvas = _render_carousel_benefit(slide_data, resolved[order], index, len(slides))
-            elif slide_template == "property_facts":
+            elif slide_template in {"property_facts", "facts_summary"}:
                 canvas = _render_carousel_facts(slide_data, resolved[order], index, len(slides))
-            elif slide_template == "cta_final":
+            elif slide_template in {"cta_final", "cta_brand"}:
                 canvas = _render_carousel_cta(slide_data, resolved[order], index, len(slides))
             else:
                 canvas = _render_carousel_environment(slide_data, resolved[order], index, len(slides))

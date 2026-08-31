@@ -9,6 +9,8 @@ integração com Meta, não publica conteúdo e não recebe prompts livres.
   para Story/capa de Reel;
 - `POST /v1/render/reel-package`: ZIP com MP4 H.264 1080×1920, capa WebP,
 legenda SRT e manifesto;
+- `POST /v1/render/carousel-package`: ZIP com 2–10 slides WebP 1080×1350 e
+  manifesto na ordem definida pelo storyboard;
 - `GET /health`: versão do serviço e `publication=false`.
 
 A versão 2 aplica o sistema visual derivado dos PDFs da Vanessa aos seis
@@ -22,6 +24,11 @@ animado quando o template é `STORY_PROPERTY_V1`. O pacote pode receber `music_p
 `ambient_warm`, `modern_soft`, `elegant_minimal` ou `none`. Os três perfis
 musicais são sintetizados no render, sem gravações de terceiros, e a seleção é
 registrada em `manifest.json`.
+
+O carrossel aceita cinco composições por slide: `cover_hero`,
+`environment_caption`, `benefit_split`, `property_facts` e `cta_final`. Cada
+slide referencia um `asset_order`, título e texto curto. Duração, música,
+movimento e transição não fazem parte do contrato de carrossel.
 
 O serviço aceita somente o contrato conhecido, limita textos e quantidade de
 imagens, exige HTTPS e allowlist exata em `SOURCE_IMAGE_HOSTS`, recusa redirects

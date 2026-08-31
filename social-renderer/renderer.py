@@ -45,7 +45,7 @@ TEMPLATES = {
 ALLOWED_KEYS = {
     "template_code", "template_version", "template_status", "property_id", "content_id",
     "headline", "subheadline", "cta", "property_code", "show_price",
-    "price", "assets", "scenes", "brand_version", "locale", "music_profile",
+    "price", "assets", "scenes", "slides", "brand_version", "locale", "music_profile",
 }
 
 MUSIC_PROFILES = {"none", "ambient_warm", "modern_soft", "elegant_minimal"}
@@ -71,7 +71,7 @@ class Rendered:
         return hashlib.sha256(self.body).hexdigest()
 
 
-def validate_payload(payload: Any, *, video: bool = False) -> dict[str, Any]:
+def validate_payload(payload: Any, *, video: bool = False, carousel: bool = False) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RenderError("O corpo deve ser um objeto JSON.")
     unknown = sorted(set(payload) - ALLOWED_KEYS)
@@ -86,6 +86,8 @@ def validate_payload(payload: Any, *, video: bool = False) -> dict[str, Any]:
         raise RenderError("Template inexistente ou não publicado.")
     if video and template not in {"REEL_PROPERTY_V1", "STORY_PROPERTY_V1"}:
         raise RenderError("O endpoint de vídeo aceita somente STORY_PROPERTY_V1 ou REEL_PROPERTY_V1.")
+    if carousel and template != "IG_CAROUSEL_V1":
+        raise RenderError("O endpoint de carrossel aceita somente IG_CAROUSEL_V1.")
     if not video and template in {"REEL_PROPERTY_V1", "STORY_PROPERTY_V1"} and payload.get("scenes"):
         raise RenderError("Use o endpoint de vídeo para renderizar cenas.")
     for key in ("property_id", "content_id"):
@@ -138,6 +140,22 @@ def validate_payload(payload: Any, *, video: bool = False) -> dict[str, Any]:
                 raise RenderError("Movimento de cena inválido.")
             if str(scene.get("transition") or "fade") not in TRANSITION_TYPES:
                 raise RenderError("Transição de cena inválida.")
+    if carousel:
+        slides = payload.get("slides") or []
+        allowed_slide_templates = {
+            "cover_hero", "environment_caption", "benefit_split", "property_facts", "cta_final"
+        }
+        if not isinstance(slides, list) or not 2 <= len(slides) <= 10:
+            raise RenderError("Informe de 2 a 10 slides no carrossel.")
+        for slide in slides:
+            if not isinstance(slide, dict) or set(slide) - {"asset_order", "title", "text", "slide_template"}:
+                raise RenderError("Slide inválido.")
+            if not isinstance(slide.get("asset_order"), int):
+                raise RenderError("asset_order do slide é inválido.")
+            if str(slide.get("slide_template") or "environment_caption") not in allowed_slide_templates:
+                raise RenderError("Template de slide inválido.")
+            if len(str(slide.get("title") or "")) > 70 or len(str(slide.get("text") or "")) > 240:
+                raise RenderError("Texto do slide excede o limite.")
     return payload
 
 
@@ -355,6 +373,99 @@ def _render_carousel_cover(data: dict[str, Any], source: Image.Image, width: int
     return canvas.convert("RGB")
 
 
+def _draw_carousel_number(draw: ImageDraw.ImageDraw, index: int, total: int) -> None:
+    font = _font(FONT_BODY_BOLD, 23)
+    label = f"{index:02} / {total:02}"
+    draw.rounded_rectangle((72, 64, 220, 116), radius=26, fill=SAGE)
+    draw.text((94, 76), label, font=font, fill=BROWN)
+
+
+def _render_carousel_environment(data: dict[str, Any], source: Image.Image, index: int, total: int) -> Image.Image:
+    canvas = _fit_cover(source, (1080, 1350), 0.48).convert("RGBA")
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    draw.rectangle((0, 890, 1080, 1350), fill=(*ImageColor.getrgb(CREAM), 246))
+    _draw_carousel_number(draw, index, total)
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 58, 38, 900, 150, 2)
+    y = 950
+    for line in lines:
+        draw.text((72, y), line, font=font, fill=BROWN)
+        y += line_height
+    text = str(data.get("subheadline") or "").strip()
+    if text:
+        body_lines, body_font, body_height = _fit_wrapped_text(draw, text, FONT_BODY, 31, 22, 900, 120, 3)
+        y += 12
+        for line in body_lines:
+            draw.text((76, y), line, font=body_font, fill=BROWN)
+            y += body_height
+    _paste_logo(canvas, (884, 64), 130)
+    return canvas.convert("RGB")
+
+
+def _render_carousel_benefit(data: dict[str, Any], source: Image.Image, index: int, total: int) -> Image.Image:
+    canvas = Image.new("RGB", (1080, 1350), CREAM)
+    canvas.paste(_fit_cover(source, (1080, 790), 0.48), (0, 0))
+    draw = ImageDraw.Draw(canvas)
+    draw.ellipse((720, 650, 1250, 1160), fill=SAGE)
+    _draw_carousel_number(draw, index, total)
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_TITLE, 64, 42, 850, 190, 3)
+    y = 850
+    for line in lines:
+        draw.text((72, y), line, font=font, fill=BROWN)
+        y += line_height
+    body = str(data.get("subheadline") or "").strip()
+    if body:
+        body_lines, body_font, body_height = _fit_wrapped_text(draw, body, FONT_BODY, 30, 22, 850, 125, 3)
+        y += 16
+        for line in body_lines:
+            draw.text((76, y), line, font=body_font, fill=CHARCOAL)
+            y += body_height
+    draw.line((72, 1260, 1008, 1260), fill=GOLD, width=4)
+    return canvas
+
+
+def _render_carousel_facts(data: dict[str, Any], source: Image.Image, index: int, total: int) -> Image.Image:
+    canvas = Image.new("RGB", (1080, 1350), CREAM)
+    canvas.paste(_fit_cover(source, (1080, 650), 0.48), (0, 0))
+    draw = ImageDraw.Draw(canvas)
+    _draw_carousel_number(draw, index, total)
+    draw.rounded_rectangle((56, 590, 1024, 1280), radius=54, fill=CREAM, outline=SAND, width=3)
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 58, 40, 850, 165, 3)
+    y = 690
+    for line in lines:
+        draw.text((104, y), line, font=font, fill=BROWN)
+        y += line_height
+    body = str(data.get("subheadline") or data.get("subheadline") or "").strip()
+    body_lines, body_font, body_height = _fit_wrapped_text(draw, body, FONT_BODY, 32, 23, 850, 245, 6)
+    y += 28
+    for line in body_lines:
+        draw.text((108, y), line, font=body_font, fill=CHARCOAL)
+        y += body_height
+    _draw_footer(draw, data, 1210, 1080)
+    return canvas
+
+
+def _render_carousel_cta(data: dict[str, Any], source: Image.Image, index: int, total: int) -> Image.Image:
+    canvas = _photo_scrim(source, 1080, 1350)
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    _draw_carousel_number(draw, index, total)
+    draw.rounded_rectangle((64, 670, 1016, 1160), radius=60, fill=(*ImageColor.getrgb(CREAM), 244))
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 64, 42, 820, 190, 3)
+    y = 755
+    for line in lines:
+        draw.text((112, y), line, font=font, fill=BROWN)
+        y += line_height
+    body = str(data.get("subheadline") or "").strip()
+    if body:
+        body_lines, body_font, body_height = _fit_wrapped_text(draw, body, FONT_BODY, 31, 22, 820, 100, 3)
+        y += 18
+        for line in body_lines:
+            draw.text((116, y), line, font=body_font, fill=BROWN)
+            y += body_height
+    _draw_footer(draw, data, 1080, 1080)
+    _paste_logo(canvas, (850, 54), 150)
+    return canvas.convert("RGB")
+
+
 def _photo_scrim(source: Image.Image, width: int, height: int) -> Image.Image:
     canvas = _fit_cover(source, (width, height), 0.48).convert("RGBA")
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
@@ -553,6 +664,51 @@ def _music_source(profile: str, duration_seconds: float) -> str:
         "highpass=f=55,lowpass=f=5200,aecho=0.8:0.28:85:0.12,"
         f"afade=t=in:st=0:d=0.8,afade=t=out:st={fade_out:.3f}:d=1.8,"
         "loudnorm=I=-23:TP=-3:LRA=8"
+    )
+
+
+def render_carousel_package(payload: dict[str, Any], images: dict[int, Image.Image] | None = None) -> Rendered:
+    data = validate_payload(payload, carousel=True)
+    assets = {int(asset.get("order", index + 1)): asset for index, asset in enumerate(data["assets"])}
+    resolved = images or {order: fetch_image(asset["url"]) for order, asset in assets.items()}
+    slides = data["slides"]
+    package = io.BytesIO()
+    manifest_slides: list[dict[str, Any]] = []
+    with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as archive:
+        for index, slide in enumerate(slides, start=1):
+            order = slide["asset_order"]
+            if order not in resolved:
+                raise RenderError(f"Slide {index} referencia asset_order inexistente.")
+            slide_template = str(slide.get("slide_template") or "environment_caption")
+            slide_data = dict(data)
+            slide_data["headline"] = str(slide.get("title") or data["headline"])
+            slide_data["subheadline"] = str(slide.get("text") or "")
+            if slide_template == "cover_hero":
+                canvas = _render_carousel_cover(slide_data, resolved[order], 1080, 1350)
+            elif slide_template == "benefit_split":
+                canvas = _render_carousel_benefit(slide_data, resolved[order], index, len(slides))
+            elif slide_template == "property_facts":
+                canvas = _render_carousel_facts(slide_data, resolved[order], index, len(slides))
+            elif slide_template == "cta_final":
+                canvas = _render_carousel_cta(slide_data, resolved[order], index, len(slides))
+            else:
+                canvas = _render_carousel_environment(slide_data, resolved[order], index, len(slides))
+            output = io.BytesIO()
+            canvas.save(output, "WEBP", quality=90, method=6)
+            filename = f"slide-{index:02}.webp"
+            archive.writestr(filename, output.getvalue())
+            manifest_slides.append({
+                "order": index, "filename": filename, "asset_order": order,
+                "slide_template": slide_template, "title": slide_data["headline"],
+            })
+        archive.writestr("manifest.json", json.dumps({
+            "content_id": data["content_id"], "template_code": data["template_code"],
+            "brand_version": data.get("brand_version", "VCV_BRAND_V1"),
+            "slide_count": len(slides), "slides": manifest_slides,
+        }, ensure_ascii=False, indent=2))
+    return Rendered(
+        package.getvalue(), "application/zip", f"content-{data['content_id']}-carousel-package.zip",
+        width=1080, height=1350,
     )
 
 

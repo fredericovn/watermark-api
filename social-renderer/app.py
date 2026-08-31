@@ -5,7 +5,7 @@ import os
 
 from flask import Flask, jsonify, make_response, request
 
-from renderer import RenderError, render_image, render_reel_package
+from renderer import RenderError, render_carousel_package, render_image, render_reel_package
 
 
 app = Flask(__name__)
@@ -29,7 +29,7 @@ def _binary_response(rendered):
 
 @app.get("/health")
 def health():
-    return jsonify(status="ok", renderer="vcv-social-renderer", version="2.1.0", publication=False)
+    return jsonify(status="ok", renderer="vcv-social-renderer", version="2.2.0", publication=False)
 
 
 @app.post("/v1/render/image")
@@ -45,6 +45,11 @@ def reel_endpoint():
 @app.post("/v1/render/vertical-package")
 def vertical_endpoint():
     return _binary_response(render_reel_package(request.get_json(silent=False)))
+
+
+@app.post("/v1/render/carousel-package")
+def carousel_endpoint():
+    return _binary_response(render_carousel_package(request.get_json(silent=False)))
 
 
 @app.errorhandler(RenderError)

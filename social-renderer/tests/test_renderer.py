@@ -15,6 +15,7 @@ from renderer import (  # noqa: E402
     FONT_BODY,
     RenderError,
     _fit_single_line,
+    render_carousel_package,
     render_image,
     render_reel_package,
     validate_payload,
@@ -118,6 +119,27 @@ def test_reel_package_contains_video_subtitles_cover_and_manifest():
     with zipfile.ZipFile(io.BytesIO(rendered.body)) as archive:
         assert set(archive.namelist()) == {"reel.mp4", "captions.srt", "cover.webp", "manifest.json"}
         assert len(archive.read("reel.mp4")) > 1000
+
+
+def test_carousel_package_renders_selected_templates_in_storyboard_order():
+    payload = sample_payload("IG_CAROUSEL_V1")
+    payload["assets"] = [
+        {"url": "https://images.example.test/photo.webp", "order": 1},
+        {"url": "https://images.example.test/photo-2.webp", "order": 2},
+    ]
+    payload["slides"] = [
+        {"asset_order": 2, "title": "Capa do imóvel", "text": "Três atributos principais", "slide_template": "cover_hero"},
+        {"asset_order": 1, "title": "Ambiente integrado", "text": "Texto curto e relacionado à fotografia", "slide_template": "environment_caption"},
+        {"asset_order": 2, "title": "Agende sua visita", "text": "Fale com a equipe VCVargas", "slide_template": "cta_final"},
+    ]
+    rendered = render_carousel_package(payload, {1: photo(), 2: photo().transpose(Image.Transpose.FLIP_LEFT_RIGHT)})
+    assert rendered.mime_type == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(rendered.body)) as archive:
+        assert set(archive.namelist()) == {"slide-01.webp", "slide-02.webp", "slide-03.webp", "manifest.json"}
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["slide_count"] == 3
+        assert [slide["asset_order"] for slide in manifest["slides"]] == [2, 1, 2]
+        assert Image.open(io.BytesIO(archive.read("slide-02.webp"))).size == (1080, 1350)
 
 
 def test_reel_uses_transitions_motion_and_neutral_music():

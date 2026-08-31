@@ -15,7 +15,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import requests
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageColor, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 
 ASSET_DIR = Path(os.getenv("ASSET_DIR", "/app/assets"))
@@ -24,25 +24,33 @@ FONT_BODY = ASSET_DIR / "fonts/Poppins-Regular.ttf"
 FONT_BODY_BOLD = ASSET_DIR / "fonts/Poppins-SemiBold.ttf"
 FONT_TITLE = ASSET_DIR / "fonts/PlayfairDisplay.ttf"
 
-CREAM = "#F4EFE5"
-OLIVE = "#596047"
-GOLD = "#C8A96A"
-CHARCOAL = "#1D1D1D"
+CREAM = "#F3EDE8"
+SAND = "#D8C9BA"
+SAGE = "#A8B0A3"
+OLIVE = "#5D6355"
+BROWN = "#5D5246"
+GOLD = "#C9A56A"
+CHARCOAL = "#232323"
 WHITE = "#FFFFFF"
 
 TEMPLATES = {
-    "IG_FEED_HERO_V1": (1080, 1350, "EDITORIAL_LIGHT"),
-    "FB_FEED_PROPERTY_V1": (1080, 1350, "EDITORIAL_LIGHT"),
-    "IG_CAROUSEL_V1": (1080, 1350, "EDITORIAL_LIGHT"),
-    "STORY_PROPERTY_V1": (1080, 1920, "PHOTO_IMPACT"),
-    "REEL_PROPERTY_V1": (1080, 1920, "PHOTO_IMPACT"),
+    "IG_FEED_HERO_V1": (1080, 1350, "FEED"),
+    "FB_FEED_PROPERTY_V1": (1080, 1350, "FEED"),
+    "IG_CAROUSEL_V1": (1080, 1350, "CAROUSEL_COVER"),
+    "STORY_PROPERTY_V1": (1080, 1920, "STORY"),
+    "REEL_PROPERTY_V1": (1080, 1920, "REEL"),
+    "MARKETPLACE_PACK_V1": (1080, 1350, "MARKETPLACE"),
 }
 
 ALLOWED_KEYS = {
     "template_code", "template_version", "template_status", "property_id", "content_id",
     "headline", "subheadline", "cta", "property_code", "show_price",
-    "price", "assets", "scenes", "brand_version", "locale",
+    "price", "assets", "scenes", "brand_version", "locale", "music_profile",
 }
+
+MUSIC_PROFILES = {"none", "ambient_warm", "modern_soft", "elegant_minimal"}
+MOTION_TYPES = {"push_in", "pull_out", "pan_left", "pan_right"}
+TRANSITION_TYPES = {"fade", "smoothleft", "smoothright", "circleopen"}
 
 
 class RenderError(ValueError):
@@ -92,6 +100,10 @@ def validate_payload(payload: Any, *, video: bool = False) -> dict[str, Any]:
         raise RenderError("headline é obrigatório.")
     if payload.get("show_price") is True and not str(payload.get("price") or "").strip():
         raise RenderError("price é obrigatório quando show_price=true.")
+    music_profile = str(payload.get("music_profile") or "ambient_warm")
+    if music_profile not in MUSIC_PROFILES:
+        raise RenderError("music_profile inválido.")
+    payload["music_profile"] = music_profile
     assets = payload.get("assets") or []
     if not isinstance(assets, list) or not assets:
         raise RenderError("Informe ao menos uma imagem em assets.")
@@ -111,7 +123,9 @@ def validate_payload(payload: Any, *, video: bool = False) -> dict[str, Any]:
         if not isinstance(scenes, list) or not 1 <= len(scenes) <= 8:
             raise RenderError("Informe de 1 a 8 cenas.")
         for scene in scenes:
-            if not isinstance(scene, dict) or set(scene) - {"asset_order", "caption", "duration_ms"}:
+            if not isinstance(scene, dict) or set(scene) - {
+                "asset_order", "caption", "duration_ms", "motion", "transition"
+            }:
                 raise RenderError("Cena inválida.")
             if not isinstance(scene.get("asset_order"), int):
                 raise RenderError("asset_order inválido.")
@@ -120,6 +134,10 @@ def validate_payload(payload: Any, *, video: bool = False) -> dict[str, Any]:
                 raise RenderError("duration_ms deve ficar entre 1500 e 6000.")
             if len(str(scene.get("caption") or "")) > 70:
                 raise RenderError("Legenda de cena excede 70 caracteres.")
+            if str(scene.get("motion") or "push_in") not in MOTION_TYPES:
+                raise RenderError("Movimento de cena inválido.")
+            if str(scene.get("transition") or "fade") not in TRANSITION_TYPES:
+                raise RenderError("Transição de cena inválida.")
     return payload
 
 
@@ -242,52 +260,102 @@ def render_image(payload: dict[str, Any], image: Image.Image | None = None) -> R
     data = validate_payload(payload)
     width, height, family = TEMPLATES[data["template_code"]]
     source = image or fetch_image(sorted(data["assets"], key=lambda a: a.get("order", 999))[0]["url"])
-    if family == "EDITORIAL_LIGHT":
-        canvas = _render_editorial_light(data, source, width, height)
-    else:
-        canvas = _render_photo_impact(data, source, width, height)
+    renderers = {
+        "FEED": _render_feed,
+        "CAROUSEL_COVER": _render_carousel_cover,
+        "STORY": _render_story,
+        "REEL": _render_reel_frame,
+        "MARKETPLACE": _render_marketplace,
+    }
+    canvas = renderers[family](data, source, width, height)
     output = io.BytesIO()
     canvas.save(output, "WEBP", quality=90, method=6)
     return Rendered(output.getvalue(), "image/webp", f"content-{data['content_id']}-{data['template_code'].lower()}.webp", width, height)
 
 
-def _render_editorial_light(data: dict[str, Any], source: Image.Image, width: int, height: int) -> Image.Image:
+def _paste_logo(canvas: Image.Image, position: tuple[int, int], size: int = 155) -> None:
+    logo = _logo(size, size)
+    if canvas.mode == "RGBA":
+        canvas.alpha_composite(logo, position)
+    else:
+        canvas.paste(logo, position, logo)
+
+
+def _draw_footer(draw: ImageDraw.ImageDraw, data: dict[str, Any], y: int, width: int) -> None:
+    code, code_font = _fit_single_line(
+        draw, str(data.get("property_code") or f"ID {data['property_id']}").upper(),
+        FONT_BODY, 24, 18, 330,
+    )
+    cta, cta_font = _fit_single_line(
+        draw, str(data.get("cta") or "AGENDE UMA VISITA").upper(),
+        FONT_BODY_BOLD, 25, 18, 500,
+    )
+    draw.text((72, y), cta, font=cta_font, fill=BROWN)
+    code_width = draw.textlength(code, font=code_font)
+    draw.text((width - 72 - code_width, y + 2), code, font=code_font, fill=BROWN)
+
+
+def _render_feed(data: dict[str, Any], source: Image.Image, width: int, height: int) -> Image.Image:
     canvas = Image.new("RGB", (width, height), CREAM)
-    photo_h = 790
+    photo_h = 760
     photo = _fit_cover(source, (width, photo_h), 0.48)
     canvas.paste(photo, (0, 0))
     draw = ImageDraw.Draw(canvas)
-    draw.ellipse((-260, 690, 630, 1430), fill=CREAM)
-    draw.rounded_rectangle((70, 720, 335, 780), radius=30, fill=OLIVE)
-    tag_font = _font(FONT_BODY_BOLD, 26)
-    draw.text((96, 737), "IMÓVEL SELECIONADO", font=tag_font, fill=WHITE)
-    title_font = _font(FONT_TITLE, 67)
-    y = 820
-    for line in _wrap(draw, data["headline"], title_font, 860, 2):
-        draw.text((84, y), line, font=title_font, fill=CHARCOAL)
-        y += 78
+    draw.ellipse((690, -430, 1370, 300), fill=SAGE)
+    draw.ellipse((-320, 650, 520, 1440), fill=CREAM)
+    draw.rounded_rectangle((64, 706, 390, 770), radius=32, fill=SAGE)
+    tag_font = _font(FONT_BODY_BOLD, 25)
+    draw.text((92, 724), "IMÓVEL À VENDA", font=tag_font, fill=BROWN)
+    title_lines, title_font, title_line_height = _fit_wrapped_text(
+        draw, data["headline"], FONT_BODY_BOLD, 64, 44, 890, 190, 3
+    )
+    y = 814
+    for line in title_lines:
+        draw.text((72, y), line, font=title_font, fill=BROWN)
+        y += title_line_height
     sub = str(data.get("subheadline") or "").strip()
     if sub:
-        sub_font = _font(FONT_BODY, 31)
-        draw.text((88, y + 12), sub, font=sub_font, fill=OLIVE)
-        y += 58
+        sub_text, sub_font = _fit_single_line(draw, sub, FONT_BODY, 31, 22, 900)
+        draw.text((76, y + 14), sub_text, font=sub_font, fill=BROWN)
+        y += 62
     if data.get("show_price"):
-        price_font = _font(FONT_BODY_BOLD, 34)
-        draw.text((88, y + 12), data["price"], font=price_font, fill=CHARCOAL)
-    cta_font = _font(FONT_BODY_BOLD, 27)
-    draw.text((88, 1248), str(data.get("cta") or "CONHEÇA ESTE IMÓVEL").upper(), font=cta_font, fill=OLIVE)
-    draw.line((88, 1295, 992, 1295), fill=GOLD, width=4)
-    code_font = _font(FONT_BODY, 23)
-    draw.text((780, 1249), str(data.get("property_code") or f"ID {data['property_id']}").upper(), font=code_font, fill=CHARCOAL)
-    logo = _logo(170, 170)
-    canvas.paste(logo, (850, 35), logo)
-    if data["template_code"] == "IG_CAROUSEL_V1":
-        draw.rounded_rectangle((790, 690, 1015, 754), radius=28, fill=GOLD)
-        draw.text((823, 708), "DESLIZE  →", font=tag_font, fill=CHARCOAL)
+        price_text, price_font = _fit_single_line(draw, data["price"], FONT_BODY_BOLD, 36, 24, 500)
+        draw.text((76, y + 10), price_text, font=price_font, fill=BROWN)
+    draw.line((72, 1236, width - 72, 1236), fill=GOLD, width=4)
+    _draw_footer(draw, data, 1268, width)
+    _paste_logo(canvas, (56, 42), 150)
     return canvas
 
 
-def _render_photo_impact(data: dict[str, Any], source: Image.Image, width: int, height: int) -> Image.Image:
+def _render_carousel_cover(data: dict[str, Any], source: Image.Image, width: int, height: int) -> Image.Image:
+    canvas = _fit_cover(source, (width, height), 0.48)
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    draw.ellipse((690, -420, 1370, 330), fill=(*ImageColor.getrgb(SAGE), 255))
+    draw.rectangle((0, 760, width, height), fill=(*ImageColor.getrgb(CREAM), 246))
+    draw.ellipse((-360, 660, 560, 1510), fill=(*ImageColor.getrgb(CREAM), 255))
+    draw.rounded_rectangle((64, 716, 390, 778), radius=31, fill=(*ImageColor.getrgb(SAGE), 255))
+    tag_font = _font(FONT_BODY_BOLD, 25)
+    draw.text((92, 733), "OPORTUNIDADE", font=tag_font, fill=BROWN)
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 70, 46, 890, 210, 3)
+    y = 830
+    for line in lines:
+        draw.text((72, y), line, font=font, fill=BROWN)
+        y += line_height
+    sub = str(data.get("subheadline") or "").strip()
+    if sub:
+        sub_text, sub_font = _fit_single_line(draw, sub, FONT_BODY, 31, 22, 900)
+        draw.text((76, y + 16), sub_text, font=sub_font, fill=BROWN)
+    if data.get("show_price"):
+        price_text, price_font = _fit_single_line(draw, data["price"], FONT_BODY_BOLD, 36, 24, 500)
+        draw.text((76, 1138), price_text, font=price_font, fill=BROWN)
+    draw.rounded_rectangle((762, 1120, 1010, 1182), radius=31, fill=(*ImageColor.getrgb(GOLD), 255))
+    draw.text((802, 1136), "DESLIZE  >", font=tag_font, fill=BROWN)
+    _draw_footer(draw, data, 1265, width)
+    _paste_logo(canvas, (56, 42), 150)
+    return canvas.convert("RGB")
+
+
+def _photo_scrim(source: Image.Image, width: int, height: int) -> Image.Image:
     canvas = _fit_cover(source, (width, height), 0.48).convert("RGBA")
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     alpha = Image.new("L", (1, height))
@@ -295,38 +363,40 @@ def _render_photo_impact(data: dict[str, Any], source: Image.Image, width: int, 
     alpha = alpha.resize((width, height))
     black = Image.new("RGBA", (width, height), (10, 12, 10, 255))
     overlay.paste(black, (0, 0), alpha)
-    canvas = Image.alpha_composite(canvas, overlay)
-    draw = ImageDraw.Draw(canvas)
-    logo = _logo(210, 210)
-    canvas.alpha_composite(logo, (70, 70))
+    return Image.alpha_composite(canvas, overlay)
+
+
+def _render_story(data: dict[str, Any], source: Image.Image, width: int, height: int) -> Image.Image:
+    canvas = _photo_scrim(source, width, height)
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    draw.ellipse((700, -460, 1510, 390), fill=(*ImageColor.getrgb(SAGE), 238))
+    draw.rounded_rectangle((64, 1090, 1016, 1635), radius=64, fill=(*ImageColor.getrgb(CREAM), 238))
+    draw.rounded_rectangle((104, 1135, 430, 1202), radius=33, fill=(*ImageColor.getrgb(SAGE), 255))
     tag_font = _font(FONT_BODY_BOLD, 28)
-    draw.rounded_rectangle((70, 1050, 365, 1118), radius=32, fill=OLIVE)
-    draw.text((100, 1068), "EXCLUSIVIDADE VCV", font=tag_font, fill=WHITE)
+    draw.text((137, 1153), "IMÓVEL À VENDA", font=tag_font, fill=BROWN)
     title_lines, title_font, title_line_height = _fit_wrapped_text(
-        draw, data["headline"], FONT_TITLE, 78, 52, 900, 282, 3
+        draw, data["headline"], FONT_BODY_BOLD, 76, 50, 830, 240, 3
     )
-    y = 1165
+    y = 1250
     for line in title_lines:
-        draw.text((72, y), line, font=title_font, fill=WHITE, stroke_width=1, stroke_fill=(0, 0, 0, 100))
+        draw.text((106, y), line, font=title_font, fill=BROWN)
         y += title_line_height
     sub = str(data.get("subheadline") or "").strip()
     if sub:
-        sub_text, sub_font = _fit_single_line(draw, sub, FONT_BODY, 34, 24, 928)
-        draw.text((76, min(y + 18, 1588)), sub_text, font=sub_font, fill=CREAM)
+        sub_text, sub_font = _fit_single_line(draw, sub, FONT_BODY, 33, 23, 820)
+        draw.text((108, min(y + 18, 1548)), sub_text, font=sub_font, fill=BROWN)
+    _paste_logo(canvas, (64, 64), 180)
+    _draw_vertical_cta(draw, data, width)
+    return canvas.convert("RGB")
 
-    # O código e o CTA têm áreas independentes. Isso evita a colisão observada
-    # quando ambos continham textos próximos dos limites aceitos pela API.
-    code_text, code_font = _fit_single_line(
-        draw,
-        str(data.get("property_code") or f"ID {data['property_id']}").upper(),
-        FONT_BODY,
-        24,
-        18,
-        420,
+
+def _draw_vertical_cta(draw: ImageDraw.ImageDraw, data: dict[str, Any], width: int) -> None:
+    code, code_font = _fit_single_line(
+        draw, str(data.get("property_code") or f"ID {data['property_id']}").upper(),
+        FONT_BODY, 24, 18, 420,
     )
-    code_width = draw.textlength(code_text, font=code_font)
-    draw.text((1008 - code_width, 1688), code_text, font=code_font, fill=WHITE)
-
+    code_width = draw.textlength(code, font=code_font)
+    draw.text((width - 72 - code_width, 1680), code, font=code_font, fill=WHITE)
     cta_box = (72, 1740, 1008, 1830)
     draw.rounded_rectangle(cta_box, radius=44, fill=GOLD)
     cta_text, cta_font = _fit_single_line(
@@ -346,7 +416,64 @@ def _render_photo_impact(data: dict[str, Any], source: Image.Image, width: int, 
         font=cta_font,
         fill=CHARCOAL,
     )
+
+
+def _render_reel_frame(data: dict[str, Any], source: Image.Image, width: int, height: int) -> Image.Image:
+    canvas = _photo_scrim(source, width, height)
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    # Vanessa's best-performing tours keep the room dominant and use a short,
+    # contextual caption instead of a large information card over the image.
+    lines, font, line_height = _fit_wrapped_text(
+        draw, data["headline"], FONT_BODY_BOLD, 58, 40, 850, 190, 3
+    )
+    text_height = len(lines) * line_height
+    y = 1435 - text_height
+    padding_x, padding_y = 38, 26
+    widest = max(draw.textlength(line, font=font) for line in lines)
+    box_left = max(64, int((width - widest) / 2) - padding_x)
+    box_right = min(width - 64, int((width + widest) / 2) + padding_x)
+    draw.rounded_rectangle(
+        (box_left, y - padding_y, box_right, y + text_height + padding_y),
+        radius=34,
+        fill=(20, 20, 18, 132),
+    )
+    for line in lines:
+        line_width = draw.textlength(line, font=font)
+        x = (width - line_width) / 2
+        draw.text((x + 2, y + 3), line, font=font, fill=(0, 0, 0, 170))
+        draw.text((x, y), line, font=font, fill=WHITE)
+        y += line_height
+    _paste_logo(canvas, (width - 200, 58), 140)
+    if data.get("_is_final_scene", True):
+        _draw_vertical_cta(draw, data, width)
     return canvas.convert("RGB")
+
+
+def _render_marketplace(data: dict[str, Any], source: Image.Image, width: int, height: int) -> Image.Image:
+    canvas = Image.new("RGB", (width, height), CREAM)
+    canvas.paste(_fit_cover(source, (width, 850), 0.48), (0, 0))
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle((0, 850, width, height), fill=CREAM)
+    draw.ellipse((760, -390, 1370, 270), fill=SAGE)
+    draw.rounded_rectangle((64, 804, 380, 870), radius=33, fill=SAGE)
+    tag_font = _font(FONT_BODY_BOLD, 25)
+    draw.text((94, 823), "IMÓVEL À VENDA", font=tag_font, fill=BROWN)
+    lines, font, line_height = _fit_wrapped_text(draw, data["headline"], FONT_BODY_BOLD, 60, 42, 900, 160, 2)
+    y = 918
+    for line in lines:
+        draw.text((72, y), line, font=font, fill=BROWN)
+        y += line_height
+    sub = str(data.get("subheadline") or "").strip()
+    if sub:
+        sub_text, sub_font = _fit_single_line(draw, sub, FONT_BODY, 30, 22, 900)
+        draw.text((76, y + 14), sub_text, font=sub_font, fill=BROWN)
+    if data.get("show_price"):
+        price_text, price_font = _fit_single_line(draw, data["price"], FONT_BODY_BOLD, 38, 25, 520)
+        draw.text((76, 1160), price_text, font=price_font, fill=BROWN)
+    draw.line((72, 1236, width - 72, 1236), fill=GOLD, width=4)
+    _draw_footer(draw, data, 1268, width)
+    _paste_logo(canvas, (56, 42), 150)
+    return canvas
 
 
 def _srt_time(milliseconds: int) -> str:
@@ -356,13 +483,50 @@ def _srt_time(milliseconds: int) -> str:
     return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
 
 
+def _motion_filter(motion: str, frames: int) -> str:
+    common = "scale=1200:2134:force_original_aspect_ratio=increase"
+    if motion == "pull_out":
+        zoom = "if(eq(on,1),1.08,max(zoom-0.0009,1.0))"
+        position = "iw/2-(iw/zoom/2):ih/2-(ih/zoom/2)"
+    elif motion == "pan_left":
+        zoom = "1.06"
+        position = f"(iw-iw/zoom)*(1-on/{frames}):ih/2-(ih/zoom/2)"
+    elif motion == "pan_right":
+        zoom = "1.06"
+        position = f"(iw-iw/zoom)*on/{frames}:ih/2-(ih/zoom/2)"
+    else:
+        zoom = "min(zoom+0.0009,1.08)"
+        position = "iw/2-(iw/zoom/2):ih/2-(ih/zoom/2)"
+    return (
+        f"{common},zoompan=z='{zoom}':x='{position.split(':')[0]}':"
+        f"y='{position.split(':')[1]}':d={frames}:s=1080x1920:fps=30,setsar=1"
+    )
+
+
+def _music_source(profile: str, duration_seconds: float) -> str:
+    notes = {
+        "ambient_warm": (174.61, 220.00, 261.63),
+        "modern_soft": (196.00, 246.94, 293.66),
+        "elegant_minimal": (164.81, 207.65, 246.94),
+    }[profile]
+    signal = "+".join(f"0.018*sin(2*PI*{frequency}*t)" for frequency in notes)
+    fade_out = max(0.0, duration_seconds - 1.8)
+    return (
+        f"aevalsrc='{signal}':s=48000:d={duration_seconds:.3f},"
+        "lowpass=f=1100,highpass=f=90,"
+        f"afade=t=in:st=0:d=1.2,afade=t=out:st={fade_out:.3f}:d=1.8,"
+        "loudnorm=I=-20:TP=-2:LRA=7"
+    )
+
+
 def render_reel_package(payload: dict[str, Any], images: dict[int, Image.Image] | None = None) -> Rendered:
     data = validate_payload(payload, video=True)
     assets = {int(a.get("order", i + 1)): a for i, a in enumerate(data["assets"])}
     resolved = images or {order: fetch_image(asset["url"]) for order, asset in assets.items()}
     with tempfile.TemporaryDirectory(prefix="vcv-render-") as tmp:
         temp = Path(tmp)
-        concat_lines: list[str] = []
+        frame_paths: list[Path] = []
+        durations: list[float] = []
         subtitles: list[str] = []
         elapsed = 0
         for index, scene in enumerate(data["scenes"], start=1):
@@ -372,25 +536,58 @@ def render_reel_package(payload: dict[str, Any], images: dict[int, Image.Image] 
             scene_payload = dict(data)
             scene_payload["headline"] = str(scene.get("caption") or data["headline"])
             scene_payload["subheadline"] = "" if index > 1 else str(data.get("subheadline") or "")
-            frame = _render_photo_impact(scene_payload, resolved[order], 1080, 1920)
+            scene_payload["_is_final_scene"] = index == len(data["scenes"])
+            frame = _render_reel_frame(scene_payload, resolved[order], 1080, 1920)
             frame_path = temp / f"scene-{index:02}.png"
             frame.save(frame_path, "PNG")
+            frame_paths.append(frame_path)
             duration = scene.get("duration_ms", 2800)
-            concat_lines.extend([f"file '{frame_path.as_posix()}'", f"duration {duration / 1000:.3f}"])
+            durations.append(duration / 1000)
             caption = str(scene.get("caption") or data["headline"]).strip()
             subtitles.extend([str(index), f"{_srt_time(elapsed)} --> {_srt_time(elapsed + duration)}", caption, ""])
             elapsed += duration
-        concat_lines.append(f"file '{frame_path.as_posix()}'")
-        concat_path = temp / "concat.txt"
-        concat_path.write_text("\n".join(concat_lines), encoding="utf-8")
         srt_path = temp / "captions.srt"
         srt_path.write_text("\n".join(subtitles), encoding="utf-8")
         video_path = temp / "reel.mp4"
-        subprocess.run([
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
-            "-i", str(concat_path), "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-preset", "medium",
-            "-movflags", "+faststart", "-an", str(video_path),
-        ], check=True, timeout=180)
+        transition_seconds = 0.45 if len(frame_paths) > 1 else 0.0
+        ffmpeg = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+        for frame_path, duration in zip(frame_paths, durations):
+            ffmpeg.extend(["-loop", "1", "-t", f"{duration:.3f}", "-i", str(frame_path)])
+
+        total_seconds = sum(durations) - transition_seconds * max(0, len(durations) - 1)
+        music_profile = data.get("music_profile", "ambient_warm")
+        if music_profile != "none":
+            ffmpeg.extend(["-f", "lavfi", "-i", _music_source(music_profile, total_seconds)])
+
+        filters: list[str] = []
+        for index, (scene, duration) in enumerate(zip(data["scenes"], durations)):
+            frames = max(1, round(duration * 30))
+            motion = str(scene.get("motion") or ("push_in" if index % 2 == 0 else "pull_out"))
+            filters.append(f"[{index}:v]{_motion_filter(motion, frames)},format=yuv420p[v{index}]")
+
+        final_video = "v0"
+        cumulative = durations[0]
+        for index in range(1, len(durations)):
+            output_label = f"vx{index}"
+            transition = str(data["scenes"][index].get("transition") or "fade")
+            offset = cumulative - transition_seconds * index
+            filters.append(
+                f"[{final_video}][v{index}]xfade=transition={transition}:"
+                f"duration={transition_seconds:.2f}:offset={offset:.3f}[{output_label}]"
+            )
+            final_video = output_label
+            cumulative += durations[index]
+
+        ffmpeg.extend(["-filter_complex", ";".join(filters), "-map", f"[{final_video}]"])
+        if music_profile != "none":
+            ffmpeg.extend(["-map", f"{len(frame_paths)}:a", "-c:a", "aac", "-b:a", "160k"])
+        else:
+            ffmpeg.append("-an")
+        ffmpeg.extend([
+            "-c:v", "libx264", "-preset", "medium", "-r", "30", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", "-shortest", str(video_path),
+        ])
+        subprocess.run(ffmpeg, check=True, timeout=240)
         cover = render_image({**data, "scenes": []}, resolved[data["scenes"][0]["asset_order"]])
         package = io.BytesIO()
         with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -399,6 +596,12 @@ def render_reel_package(payload: dict[str, Any], images: dict[int, Image.Image] 
             archive.writestr("cover.webp", cover.body)
             archive.writestr("manifest.json", json.dumps({
                 "content_id": data["content_id"], "template_code": data["template_code"],
-                "duration_ms": elapsed, "brand_version": data.get("brand_version", "VCV_BRAND_V1"),
+                "duration_ms": round(total_seconds * 1000),
+                "brand_version": data.get("brand_version", "VCV_BRAND_V1"),
+                "music_profile": music_profile,
+                "transition_seconds": transition_seconds,
             }, ensure_ascii=False, indent=2))
-        return Rendered(package.getvalue(), "application/zip", f"content-{data['content_id']}-reel-package.zip", duration_ms=elapsed)
+        return Rendered(
+            package.getvalue(), "application/zip", f"content-{data['content_id']}-reel-package.zip",
+            duration_ms=round(total_seconds * 1000),
+        )

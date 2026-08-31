@@ -29,7 +29,7 @@ def _binary_response(rendered):
 
 @app.get("/health")
 def health():
-    return jsonify(status="ok", renderer="vcv-social-renderer", version="1.0.0", publication=False)
+    return jsonify(status="ok", renderer="vcv-social-renderer", version="2.0.0", publication=False)
 
 
 @app.post("/v1/render/image")

@@ -3,13 +3,24 @@
 Serviço determinístico para produzir derivados editoriais da VCV. Não contém
 integração com Meta, não publica conteúdo e não recebe prompts livres.
 
-## Saídas v1
+## Saídas v2
 
 - `POST /v1/render/image`: WebP 1080×1350 para Feed/carrossel ou 1080×1920
   para Story/capa de Reel;
 - `POST /v1/render/reel-package`: ZIP com MP4 H.264 1080×1920, capa WebP,
-  legenda SRT e manifesto;
+legenda SRT e manifesto;
 - `GET /health`: versão do serviço e `publication=false`.
+
+A versão 2 aplica o sistema visual derivado dos PDFs da Vanessa aos seis
+templates cadastrados. Feed, Facebook, carrossel, Story, Reel e Marketplace
+possuem composição explícita; Marketplace passa a gerar capa promocional sem
+substituir as fotografias documentais do anúncio.
+
+No Reel, cada cena aceita `motion` (`push_in`, `pull_out`, `pan_left` ou
+`pan_right`) e `transition`. O pacote pode receber `music_profile` com
+`ambient_warm`, `modern_soft`, `elegant_minimal` ou `none`. Os três perfis
+musicais são sintetizados no render, sem gravações de terceiros, e a seleção é
+registrada em `manifest.json`.
 
 O serviço aceita somente o contrato conhecido, limita textos e quantidade de
 imagens, exige HTTPS e allowlist exata em `SOURCE_IMAGE_HOSTS`, recusa redirects

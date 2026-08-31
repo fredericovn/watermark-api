@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import io
+import json
+import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -55,6 +58,20 @@ def test_story_dimensions():
     assert Image.open(io.BytesIO(rendered.body)).size == (1080, 1920)
 
 
+def test_all_six_registered_templates_render_at_contract_size():
+    expected = {
+        "IG_FEED_HERO_V1": (1080, 1350),
+        "FB_FEED_PROPERTY_V1": (1080, 1350),
+        "IG_CAROUSEL_V1": (1080, 1350),
+        "STORY_PROPERTY_V1": (1080, 1920),
+        "REEL_PROPERTY_V1": (1080, 1920),
+        "MARKETPLACE_PACK_V1": (1080, 1350),
+    }
+    for template, dimensions in expected.items():
+        rendered = render_image(sample_payload(template), photo())
+        assert Image.open(io.BytesIO(rendered.body)).size == dimensions
+
+
 def test_long_cta_and_property_code_fit_their_reserved_areas():
     from PIL import ImageDraw
 
@@ -101,3 +118,27 @@ def test_reel_package_contains_video_subtitles_cover_and_manifest():
     with zipfile.ZipFile(io.BytesIO(rendered.body)) as archive:
         assert set(archive.namelist()) == {"reel.mp4", "captions.srt", "cover.webp", "manifest.json"}
         assert len(archive.read("reel.mp4")) > 1000
+
+
+def test_reel_uses_transitions_motion_and_neutral_music():
+    payload = sample_payload("REEL_PROPERTY_V1")
+    payload["music_profile"] = "elegant_minimal"
+    payload["assets"].append({"url": "https://images.example.test/photo-2.webp", "order": 2})
+    payload["scenes"] = [
+        {"asset_order": 1, "caption": "Sala integrada", "duration_ms": 1800, "motion": "push_in", "transition": "fade"},
+        {"asset_order": 2, "caption": "Cozinha iluminada", "duration_ms": 1800, "motion": "pan_right", "transition": "smoothleft"},
+    ]
+    rendered = render_reel_package(payload, {1: photo(), 2: photo().transpose(Image.Transpose.FLIP_LEFT_RIGHT)})
+    with zipfile.ZipFile(io.BytesIO(rendered.body)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["music_profile"] == "elegant_minimal"
+        assert manifest["transition_seconds"] == 0.45
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as video:
+            video.write(archive.read("reel.mp4"))
+            video.flush()
+            streams = subprocess.check_output([
+                "ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
+                "-of", "csv=p=0", video.name,
+            ], text=True).splitlines()
+        assert "video" in streams
+        assert "audio" in streams
